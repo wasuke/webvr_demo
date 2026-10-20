@@ -35,12 +35,32 @@ document.getElementById('reset').onclick=resetForward;
 document.getElementById('vr').onclick=()=>{vr=!vr;document.body.classList.toggle('vr',vr);document.getElementById('vr').textContent=vr?'通常表示に戻す':'VR表示に切替';onResize()};
 let dragging=false,lastX=0,lastY=0;renderer.domElement.addEventListener('pointerdown',e=>{dragging=true;lastX=e.clientX;lastY=e.clientY;renderer.domElement.setPointerCapture(e.pointerId)});renderer.domElement.addEventListener('pointermove',e=>{if(!dragging)return;manualYaw+=(e.clientX-lastX)*.004;manualPitch=Math.max(-1.45,Math.min(1.45,manualPitch+(e.clientY-lastY)*.004));lastX=e.clientX;lastY=e.clientY});renderer.domElement.addEventListener('pointerup',()=>dragging=false);
 const leftCamera=new THREE.PerspectiveCamera(),rightCamera=new THREE.PerspectiveCamera();const eyeDistance=.064;const clock=new THREE.Clock();
-function onResize(){renderer.setSize(innerWidth,innerHeight);camera.aspect=vr?(innerWidth/2)/innerHeight:innerWidth/innerHeight;camera.updateProjectionMatrix()}addEventListener('resize',onResize);
+// 横画面では正方形の2画面を中央で隣接させ、左右に最低4%ずつ余白を残す。
+// 縦画面のVR表示と通常表示は従来どおり。
+let eyeView;
+function getEyeView(width,height){
+  if(width>height){
+    const size=Math.floor(Math.min(height,width*.46));
+    return {x:Math.floor((width-size*2)/2),y:Math.floor((height-size)/2),width:size,height:size};
+  }
+  return {x:0,y:0,width:width/2,height};
+}
+function onResize(){
+  renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+  renderer.setSize(innerWidth,innerHeight);
+  eyeView=getEyeView(innerWidth,innerHeight);
+  camera.aspect=vr?eyeView.width/eyeView.height:innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize',onResize);
+onResize();
 function animate(){requestAnimationFrame(animate);const t=clock.getElapsedTime();objs.forEach(({m,y,phase})=>{m.rotation.x=t*.25+phase;m.rotation.y=t*.45+phase;m.position.y=y+Math.sin(t*.8+phase)*.18});
 if(enabled&&sensor){const q=deviceQuaternion(sensor);const offset=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0),-headingOffset+manualYaw);camera.quaternion.copy(offset).multiply(q)}else{camera.quaternion.setFromEuler(new THREE.Euler(manualPitch,manualYaw,0,'YXZ'))}
 renderer.setScissorTest(false);renderer.setViewport(0,0,innerWidth,innerHeight);if(!vr){renderer.render(scene,camera);return}
 // 2台の仮想カメラを64mm離して、左右それぞれの目に描画する。
-const half=innerWidth/2;camera.updateMatrixWorld(true);for(let i=0;i<2;i++){const c=i===0?leftCamera:rightCamera;c.fov=camera.fov;c.aspect=half/innerHeight;c.near=camera.near;c.far=camera.far;c.updateProjectionMatrix();c.position.copy(camera.position).add(new THREE.Vector3(i===0?-eyeDistance/2:eyeDistance/2,0,0).applyQuaternion(camera.quaternion));c.quaternion.copy(camera.quaternion);c.updateMatrixWorld(true);renderer.setViewport(i*half,0,half,innerHeight);renderer.setScissor(i*half,0,half,innerHeight);renderer.setScissorTest(true);renderer.render(scene,c)}renderer.setScissorTest(false)}animate();
+// 全画面を黒で消去し、描画領域の外側を余白にする。
+renderer.setClearColor(0x000000,1);renderer.clear(true,true,true);
+const view=eyeView;camera.updateMatrixWorld(true);for(let i=0;i<2;i++){const c=i===0?leftCamera:rightCamera;c.fov=camera.fov;c.aspect=view.width/view.height;c.near=camera.near;c.far=camera.far;c.updateProjectionMatrix();c.position.copy(camera.position).add(new THREE.Vector3(i===0?-eyeDistance/2:eyeDistance/2,0,0).applyQuaternion(camera.quaternion));c.quaternion.copy(camera.quaternion);c.updateMatrixWorld(true);const x=view.x+i*view.width;renderer.setViewport(x,view.y,view.width,view.height);renderer.setScissor(x,view.y,view.width,view.height);renderer.setScissorTest(true);renderer.render(scene,c)}renderer.setScissorTest(false)}animate();
 </script>
 </body>
 </html>
