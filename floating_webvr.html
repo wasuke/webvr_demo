@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>浮遊する立体 - WebVR体験</title>
+<style>
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#080d1d;color:white;font-family:system-ui,sans-serif;touch-action:none}canvas{display:block}#ui{position:fixed;z-index:10;top:env(safe-area-inset-top,12px);left:12px;right:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;pointer-events:none}button,#status{pointer-events:auto;border:1px solid #ffffff55;border-radius:10px;background:#142542e8;color:white;padding:11px 14px;font-size:14px}button{cursor:pointer}#status{font-size:12px;max-width:320px}#hint{position:fixed;bottom:calc(18px + env(safe-area-inset-bottom));left:0;right:0;text-align:center;font-size:13px;text-shadow:0 2px 6px black;pointer-events:none}#crosshair{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:8px;height:8px;border:1px solid #fff9;border-radius:50%;pointer-events:none}body.vr #crosshair{display:none}body.vr #ui{top:auto;bottom:calc(12px + env(safe-area-inset-bottom))}body.vr #hint{display:none}
+</style>
+</head>
+<body>
+<div id="ui"><button id="start">ジャイロを開始</button><button id="vr">VR表示に切替</button><button id="reset">正面を合わせる</button><span id="status">開始を押してください。ジャイロが使えない場合は画面をドラッグできます。</span></div>
+<div id="crosshair"></div><div id="hint">スマホを動かして周囲を見回そう。PCではドラッグで視点を変更できます。</div>
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.module.js';
+const scene=new THREE.Scene();scene.background=new THREE.Color(0x080d1d);scene.fog=new THREE.FogExp2(0x080d1d,.018);
+const camera=new THREE.PerspectiveCamera(72,innerWidth/innerHeight,.05,150);camera.position.set(0,1.6,0);
+const renderer=new THREE.WebGLRenderer({antialias:true});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setSize(innerWidth,innerHeight);renderer.outputColorSpace=THREE.SRGBColorSpace;document.body.prepend(renderer.domElement);
+scene.add(new THREE.HemisphereLight(0xc6dcff,0x1b1d40,2));const light=new THREE.PointLight(0xffffff,70,25);light.position.set(1,5,1);scene.add(light);
+const grid=new THREE.GridHelper(30,30,0x4166a3,0x203352);grid.position.y=-1.3;scene.add(grid);
+const objs=[];const materials=[0x36d5ff,0xff6ab3,0xffd45b,0x80ffbc,0xb29aff];
+const geos=[new THREE.SphereGeometry(.6,32,24),new THREE.BoxGeometry(1,1,1),new THREE.TorusGeometry(.65,.2,16,48),new THREE.OctahedronGeometry(.75),new THREE.IcosahedronGeometry(.65)];
+const places=[[-1.1,1.7,-1.8],[1.5,2,-3.5],[-3,1.4,-5],[3.5,2.5,-7],[0,3,-9],[-6,2,-3],[5,1.2,2],[-2,3,4],[2,2,6],[0,1,-14]];
+places.forEach((p,i)=>{const mat=new THREE.MeshStandardMaterial({color:materials[i%5],roughness:.3,metalness:.18,emissive:materials[i%5],emissiveIntensity:.12});const m=new THREE.Mesh(geos[i%5],mat);m.position.set(...p);scene.add(m);objs.push({m,y:p[1],phase:i*1.9})});
+// センサー座標をThree.jsカメラの座標に変換する。
+const zee=new THREE.Vector3(0,0,1),euler=new THREE.Euler(),q0=new THREE.Quaternion(),q1=new THREE.Quaternion(-Math.sqrt(.5),0,0,Math.sqrt(.5));
+let sensor=null,enabled=false,headingOffset=0,manualYaw=0,manualPitch=0,vr=false;
+const status=document.getElementById('status');
+function orientation(ev){if(ev.alpha===null||ev.beta===null||ev.gamma===null)return;sensor={alpha:ev.alpha,beta:ev.beta,gamma:ev.gamma};enabled=true;status.textContent='ジャイロ動作中。正面がずれたら「正面を合わせる」を押してください。'}
+function screenAngle(){return screen.orientation?.angle??(typeof window.orientation==='number'?window.orientation:0)}
+function deviceQuaternion(s){const alpha=THREE.MathUtils.degToRad(s.alpha),beta=THREE.MathUtils.degToRad(s.beta),gamma=THREE.MathUtils.degToRad(s.gamma),orient=THREE.MathUtils.degToRad(screenAngle());euler.set(beta,alpha,-gamma,'YXZ');const q=new THREE.Quaternion().setFromEuler(euler);q.multiply(q1);q.multiply(q0.setFromAxisAngle(zee,-orient));return q}
+function yawFromQuaternion(q){const f=new THREE.Vector3(0,0,-1).applyQuaternion(q);return Math.atan2(-f.x,-f.z)}
+function resetForward(){if(sensor){headingOffset=yawFromQuaternion(deviceQuaternion(sensor));manualYaw=0;manualPitch=0}else{manualYaw=0;manualPitch=0} }
+document.getElementById('start').onclick=async()=>{try{if(!('DeviceOrientationEvent' in window)){status.textContent='このブラウザはジャイロに対応していません。ドラッグ操作を使ってください。';return}if(typeof DeviceOrientationEvent.requestPermission==='function'){const p=await DeviceOrientationEvent.requestPermission();if(p!=='granted'){status.textContent='ジャイロの利用が許可されませんでした。ドラッグ操作が使えます。';return}}window.addEventListener('deviceorientation',orientation,true);status.textContent='センサー待機中。反応しなければHTTPSとブラウザ設定を確認してください。';}catch(err){status.textContent='センサー開始に失敗: '+err.message}};
+document.getElementById('reset').onclick=resetForward;
+document.getElementById('vr').onclick=()=>{vr=!vr;document.body.classList.toggle('vr',vr);document.getElementById('vr').textContent=vr?'通常表示に戻す':'VR表示に切替';onResize()};
+let dragging=false,lastX=0,lastY=0;renderer.domElement.addEventListener('pointerdown',e=>{dragging=true;lastX=e.clientX;lastY=e.clientY;renderer.domElement.setPointerCapture(e.pointerId)});renderer.domElement.addEventListener('pointermove',e=>{if(!dragging)return;manualYaw+=(e.clientX-lastX)*.004;manualPitch=Math.max(-1.45,Math.min(1.45,manualPitch+(e.clientY-lastY)*.004));lastX=e.clientX;lastY=e.clientY});renderer.domElement.addEventListener('pointerup',()=>dragging=false);
+const leftCamera=new THREE.PerspectiveCamera(),rightCamera=new THREE.PerspectiveCamera();const eyeDistance=.064;const clock=new THREE.Clock();
+function onResize(){renderer.setSize(innerWidth,innerHeight);camera.aspect=vr?(innerWidth/2)/innerHeight:innerWidth/innerHeight;camera.updateProjectionMatrix()}addEventListener('resize',onResize);
+function animate(){requestAnimationFrame(animate);const t=clock.getElapsedTime();objs.forEach(({m,y,phase})=>{m.rotation.x=t*.25+phase;m.rotation.y=t*.45+phase;m.position.y=y+Math.sin(t*.8+phase)*.18});
+if(enabled&&sensor){const q=deviceQuaternion(sensor);const offset=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0),-headingOffset+manualYaw);camera.quaternion.copy(offset).multiply(q)}else{camera.quaternion.setFromEuler(new THREE.Euler(manualPitch,manualYaw,0,'YXZ'))}
+renderer.setScissorTest(false);renderer.setViewport(0,0,innerWidth,innerHeight);if(!vr){renderer.render(scene,camera);return}
+// 2台の仮想カメラを64mm離して、左右それぞれの目に描画する。
+const half=innerWidth/2;camera.updateMatrixWorld(true);for(let i=0;i<2;i++){const c=i===0?leftCamera:rightCamera;c.fov=camera.fov;c.aspect=half/innerHeight;c.near=camera.near;c.far=camera.far;c.updateProjectionMatrix();c.position.copy(camera.position).add(new THREE.Vector3(i===0?-eyeDistance/2:eyeDistance/2,0,0).applyQuaternion(camera.quaternion));c.quaternion.copy(camera.quaternion);c.updateMatrixWorld(true);renderer.setViewport(i*half,0,half,innerHeight);renderer.setScissor(i*half,0,half,innerHeight);renderer.setScissorTest(true);renderer.render(scene,c)}renderer.setScissorTest(false)}animate();
+</script>
+</body>
+</html>
