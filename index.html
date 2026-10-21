@@ -9,7 +9,7 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#080d1d;col
 </head>
 <body>
 <div id="ui"><button id="start">ジャイロを開始</button><button id="vr">VR表示に切替</button><button id="reset">正面を合わせる</button><span id="status">開始を押してください。ジャイロが使えない場合は画面をドラッグできます。</span></div>
-<div id="crosshair"></div><div id="hint">スマホを動かして周囲を見回そう。PCではドラッグで視点を変更できます。</div>
+<div id="crosshair"></div><div id="hint">中央で立体を見つめると、ゆっくり近づきます。スマホを動かすか、ドラッグして見回そう。</div>
 <script type="module">
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.module.js';
 const scene=new THREE.Scene();scene.background=new THREE.Color(0x080d1d);scene.fog=new THREE.FogExp2(0x080d1d,.018);
@@ -20,7 +20,7 @@ const grid=new THREE.GridHelper(30,30,0x4166a3,0x203352);grid.position.y=-1.3;sc
 const objs=[];const materials=[0x36d5ff,0xff6ab3,0xffd45b,0x80ffbc,0xb29aff];
 const geos=[new THREE.SphereGeometry(.6,32,24),new THREE.BoxGeometry(1,1,1),new THREE.TorusGeometry(.65,.2,16,48),new THREE.OctahedronGeometry(.75),new THREE.IcosahedronGeometry(.65)];
 const places=[[-1.1,1.7,-1.8],[1.5,2,-3.5],[-3,1.4,-5],[3.5,2.5,-7],[0,3,-9],[-6,2,-3],[5,1.2,2],[-2,3,4],[2,2,6],[0,1,-14]];
-places.forEach((p,i)=>{const mat=new THREE.MeshStandardMaterial({color:materials[i%5],roughness:.3,metalness:.18,emissive:materials[i%5],emissiveIntensity:.12});const m=new THREE.Mesh(geos[i%5],mat);m.position.set(...p);scene.add(m);objs.push({m,y:p[1],phase:i*1.9})});
+places.forEach((p,i)=>{const mat=new THREE.MeshStandardMaterial({color:materials[i%5],roughness:.3,metalness:.18,emissive:materials[i%5],emissiveIntensity:.12});const m=new THREE.Mesh(geos[i%5],mat);m.position.set(...p);scene.add(m);objs.push({m,base:m.position.clone(),phase:i*1.9})});
 // センサー座標をThree.jsカメラの座標に変換する。
 const zee=new THREE.Vector3(0,0,1),euler=new THREE.Euler(),q0=new THREE.Quaternion(),q1=new THREE.Quaternion(-Math.sqrt(.5),0,0,Math.sqrt(.5));
 let sensor=null,enabled=false,headingOffset=0,manualYaw=0,manualPitch=0,vr=false;
@@ -54,8 +54,39 @@ function onResize(){
 }
 addEventListener('resize',onResize);
 onResize();
-function animate(){requestAnimationFrame(animate);const t=clock.getElapsedTime();objs.forEach(({m,y,phase})=>{m.rotation.x=t*.25+phase;m.rotation.y=t*.45+phase;m.position.y=y+Math.sin(t*.8+phase)*.18});
+// 画面中央の視線で判定する。VRでは左右の目の中間のカメラを使用。
+const gazeRay=new THREE.Raycaster(),gazeCenter=new THREE.Vector2(0,0);
+const gazeMeshes=objs.map(o=>o.m),gazeObjects=new Map(objs.map(o=>[o.m,o]));
+const towardCamera=new THREE.Vector3();
+const gazeDelay=.8,approachSpeed=.8,stopDistance=1.5;
+let gazeTarget=null,gazeTime=0;
+const crosshair=document.getElementById('crosshair');
+document.addEventListener('visibilitychange',()=>{gazeTarget=null;gazeTime=0;});
+function updateGaze(dt){
+  camera.updateMatrixWorld(true);
+  scene.updateMatrixWorld(true);
+  gazeRay.setFromCamera(gazeCenter,camera);
+  const hit=gazeRay.intersectObjects(gazeMeshes,false)[0];
+  const target=hit?gazeObjects.get(hit.object):null;
+  if(target!==gazeTarget){gazeTarget=target;gazeTime=0;}
+  if(target)gazeTime+=dt;
+  const approaching=target&&gazeTime>=gazeDelay;
+  crosshair.style.borderColor=target?'#80ffbc':'#ffffff99';
+  crosshair.style.background=approaching?'#80ffbc':'transparent';
+  for(const o of objs)o.m.material.emissiveIntensity=o===target?(approaching?.5:.3):.12;
+  if(!approaching)return;
+  towardCamera.copy(camera.position).sub(target.base);
+  const distance=towardCamera.length();
+  // カメラを通り抜けず、手前で停止。視線を外すとその場で浮遊する。
+  if(distance>stopDistance){
+    const step=Math.min(approachSpeed*dt,distance-stopDistance);
+    target.base.addScaledVector(towardCamera,step/distance);
+    target.m.position.addScaledVector(towardCamera,step/distance);
+  }
+}
+function animate(){requestAnimationFrame(animate);const dt=Math.min(clock.getDelta(),.05),t=clock.elapsedTime;objs.forEach(({m,base,phase})=>{m.rotation.x=t*.25+phase;m.rotation.y=t*.45+phase;m.position.copy(base);m.position.y+=Math.sin(t*.8+phase)*.18});
 if(enabled&&sensor){const q=deviceQuaternion(sensor);const offset=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0),-headingOffset+manualYaw);camera.quaternion.copy(offset).multiply(q)}else{camera.quaternion.setFromEuler(new THREE.Euler(manualPitch,manualYaw,0,'YXZ'))}
+updateGaze(dt);
 renderer.setScissorTest(false);renderer.setViewport(0,0,innerWidth,innerHeight);if(!vr){renderer.render(scene,camera);return}
 // 2台の仮想カメラを64mm離して、左右それぞれの目に描画する。
 // 全画面を黒で消去し、描画領域の外側を余白にする。
